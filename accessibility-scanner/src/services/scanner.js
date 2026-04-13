@@ -189,23 +189,51 @@ async function getBrowserArgs() {
 
 /**
  * 主要掃描函數
- * @param {string} url - 要掃描的網址
+ * @param {string} url   - 要掃描的網址
+ * @param {Function} onProgress - 進度回呼 (step: 1-4, message: string)
  * @returns {Object} 掃描結果
  */
-async function scanUrl(url) {
+async function scanUrl(url, onProgress = () => {}) {
   const scanId = uuidv4();
   const startTime = Date.now();
   let browser = null;
 
+  const progress = (step, message) => {
+    try { onProgress(step, message); } catch (_) {}
+  };
+
   try {
+    // ── Step 1: 啟動瀏覽器 ───────────────────────────────────────────────
+    progress(1, 'Launching browser...');
     const browserArgs = await getBrowserArgs();
     browser = await puppeteer.launch(browserArgs);
 
     const page = await browser.newPage();
-    await page.setDefaultNavigationTimeout(30000);
-    await page.setViewport({ width: 1280, height: 800 });
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
 
+    // 封鎖圖片、字型、CSS、媒體：對 DOM 分析無影響，大幅加速載入
+    await page.setRequestInterception(true);
+    page.on('request', (req) => {
+      const type = req.resourceType();
+      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+        req.abort();
+      } else {
+        req.continue();
+      }
+    });
+
+    await page.setDefaultNavigationTimeout(25000);
+    await page.setViewport({ width: 1280, height: 800 });
+
+    // ── Step 2: 載入頁面 ─────────────────────────────────────────────────
+    // domcontentloaded：DOM 就緒即掃，不等廣告、追蹤腳本載完
+    progress(2, 'Loading page...');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
+
+    // 等 1.5 秒讓關鍵 JS 完成渲染（取代 networkidle2 的漫長等待）
+    await new Promise((r) => setTimeout(r, 1500));
+
+    // ── Step 3: 執行 axe-core 掃描 ──────────────────────────────────────
+    progress(3, 'Scanning accessibility...');
     const axeSource = require('axe-core').source;
     await page.evaluate(axeSource);
 
@@ -220,6 +248,9 @@ async function scanUrl(url) {
 
     const pageTitle = await page.title();
     const scanDuration = Date.now() - startTime;
+
+    // ── Step 4: 整理結果 ─────────────────────────────────────────────────
+    progress(4, 'Building report...');
 
     const violations = axeResults.violations.map((v) => {
       const wcagInfo = WCAG_DESCRIPTIONS[v.id] || {
