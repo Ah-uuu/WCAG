@@ -125,6 +125,7 @@ const FIX_GUIDANCE = {
   'tabindex':
     'Remove positive tabindex values (tabindex="1", "2", etc). Use tabindex="0" to include an element in focus order, or tabindex="-1" to make it programmatically focusable only.',
   'skip-link':
+    'Add a "Skip to main content" link as the first focusable element on the page.\nExample: <a href="#main-content" class="skip-link">Skip to main content</a>',
   'bypass':
     'Add a "Skip to main content" link as the first focusable element on the page.\nExample: <a href="#main-content" class="skip-link">Skip to main content</a>',
   'aria-required-children':
