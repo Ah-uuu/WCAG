@@ -1,28 +1,36 @@
 {
-  "name": "accessibility-scanner-api",
-  "version": "1.0.0",
-  "description": "WCAG Accessibility Compliance Scanner API",
-  "main": "src/index.js",
-  "scripts": {
-    "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "express-rate-limit": "^7.1.5",
-    "axe-core": "^4.8.3",
-    "puppeteer-core": "^21.5.2",
-    "@sparticuz/chromium": "^119.0.0",
-    "pdfkit": "^0.14.0",
-    "uuid": "^9.0.0",
-    "dotenv": "^16.3.1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  }
+    "name": "accessibility-scanner-api",
+    "version": "2.0.0",
+    "description": "WCAG Accessibility Compliance Scanner API — with Auth & Subscriptions",
+    "main": "src/index.js",
+    "scripts": {
+          "start": "node src/index.js",
+          "dev": "nodemon src/index.js",
+          "db:generate": "prisma generate",
+          "db:migrate": "prisma migrate deploy",
+          "db:push": "prisma db push",
+          "db:studio": "prisma studio"
+    },
+    "engines": {
+          "node": ">=18.0.0"
+    },
+    "dependencies": {
+          "express": "^4.18.2",
+          "cors": "^2.8.5",
+          "helmet": "^7.1.0",
+          "express-rate-limit": "^7.1.5",
+          "axe-core": "^4.8.3",
+          "puppeteer-core": "^21.5.2",
+          "@sparticuz/chromium": "^119.0.0",
+          "pdfkit": "^0.14.0",
+          "uuid": "^9.0.0",
+          "dotenv": "^16.3.1",
+          "better-auth": "^1.2.7",
+          "@prisma/client": "^6.0.0",
+          "stripe": "^17.0.0"
+    },
+    "devDependencies": {
+          "nodemon": "^3.0.2",
+          "prisma": "^6.0.0"
+    }
 }
