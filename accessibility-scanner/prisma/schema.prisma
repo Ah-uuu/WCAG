@@ -1,0 +1,131 @@
+generator client {
+  provider = "prisma-client-js"
+  }
+
+  datasource db {
+    provider = "postgresql"
+      url      = env("DATABASE_URL")
+      }
+
+      model user {
+        id            String   @id @default(cuid())
+          name          String
+            email         String   @unique
+              emailVerified Boolean  @default(false)
+                image         String?
+                  createdAt     DateTime @default(now())
+                    updatedAt     DateTime @updatedAt
+
+                      sessions      session[]
+                        accounts      account[]
+
+                          subscription  Subscription?
+                            scans         Scan[]
+                              repairs       Repair[]
+                              }
+
+                              model session {
+                                id        String   @id @default(cuid())
+                                  expiresAt DateTime
+                                    token     String   @unique
+                                      createdAt DateTime @default(now())
+                                        updatedAt DateTime @updatedAt
+                                          ipAddress String?
+                                            userAgent String?
+                                              userId    String
+
+                                                user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+                                                }
+
+                                                model account {
+                                                  id                    String    @id @default(cuid())
+                                                    accountId             String
+                                                      providerId            String
+                                                        userId                String
+                                                          accessToken           String?
+                                                            refreshToken          String?
+                                                              idToken               String?
+                                                                accessTokenExpiresAt  DateTime?
+                                                                  refreshTokenExpiresAt DateTime?
+                                                                    scope                 String?
+                                                                      password              String?
+                                                                        createdAt             DateTime  @default(now())
+                                                                          updatedAt             DateTime  @updatedAt
+
+                                                                            user                  user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+                                                                              @@unique([providerId, accountId])
+                                                                              }
+
+                                                                              model verification {
+                                                                                id         String    @id @default(cuid())
+                                                                                  identifier String
+                                                                                    value      String
+                                                                                      expiresAt  DateTime
+                                                                                        createdAt  DateTime? @default(now())
+                                                                                          updatedAt  DateTime? @updatedAt
+                                                                                          }
+
+                                                                                          model Subscription {
+                                                                                            id                   String    @id @default(cuid())
+                                                                                              userId               String    @unique
+                                                                                                stripeCustomerId     String    @unique
+                                                                                                  stripeSubscriptionId String?   @unique
+                                                                                                    stripePriceId        String?
+                                                                                                      plan                 Plan      @default(FREE)
+                                                                                                        status               SubStatus @default(ACTIVE)
+                                                                                                          currentPeriodEnd     DateTime?
+                                                                                                            cancelAtPeriodEnd    Boolean   @default(false)
+                                                                                                              createdAt            DateTime  @default(now())
+                                                                                                                updatedAt            DateTime  @updatedAt
+                                                                                                                
+                                                                                                                  user                 user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+                                                                                                                  }
+                                                                                                                  
+                                                                                                                  model Scan {
+                                                                                                                    id        String   @id @default(cuid())
+                                                                                                                      userId    String?
+                                                                                                                        url       String
+                                                                                                                          result    Json
+                                                                                                                            score     Int?
+                                                                                                                              status    String?
+                                                                                                                                createdAt DateTime @default(now())
+                                                                                                                                
+                                                                                                                                  user      user?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+                                                                                                                                  }
+                                                                                                                                  
+                                                                                                                                  model Repair {
+                                                                                                                                    id           String       @id @default(cuid())
+                                                                                                                                      userId       String
+                                                                                                                                        originalHtml String       @db.Text
+                                                                                                                                          repairedHtml String?      @db.Text
+                                                                                                                                            diff         String?      @db.Text
+                                                                                                                                              issueCount   Int          @default(0)
+                                                                                                                                                status       RepairStatus @default(PENDING)
+                                                                                                                                                  createdAt    DateTime     @default(now())
+                                                                                                                                                    updatedAt    DateTime     @updatedAt
+                                                                                                                                                    
+                                                                                                                                                      user         user         @relation(fields: [userId], references: [id], onDelete: Cascade)
+                                                                                                                                                      }
+                                                                                                                                                      
+                                                                                                                                                      enum Plan {
+                                                                                                                                                        FREE
+                                                                                                                                                          PRO
+                                                                                                                                                            BUSINESS
+                                                                                                                                                              ENTERPRISE
+                                                                                                                                                              }
+                                                                                                                                                              
+                                                                                                                                                              enum SubStatus {
+                                                                                                                                                                ACTIVE
+                                                                                                                                                                  CANCELED
+                                                                                                                                                                    PAST_DUE
+                                                                                                                                                                      INCOMPLETE
+                                                                                                                                                                      }
+                                                                                                                                                                      
+                                                                                                                                                                      enum RepairStatus {
+                                                                                                                                                                        PENDING
+                                                                                                                                                                          PROCESSING
+                                                                                                                                                                            COMPLETED
+                                                                                                                                                                              FAILED
+                                                                                                                                                                                MANUAL_REVIEW
+                                                                                                                                                                                }
