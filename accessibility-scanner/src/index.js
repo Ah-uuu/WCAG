@@ -11,6 +11,7 @@ const stripeRouter  = require('./routes/stripe');
 const webhookRouter = require('./routes/webhook');
 
 const app  = express();
+app.set('trust proxy', 1); // Render reverse proxy support
 const PORT = process.env.PORT || 3000;
 
 // ─────────────────────────────────────────────────────────────────────────────
