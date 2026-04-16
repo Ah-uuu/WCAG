@@ -25,3 +25,6 @@ export const createPortal = () =>
 
 export const getReportUrl = (scanId) =>
   `${API_URL}/api/report/pdf/${scanId}`;
+
+export const generateRepair = (url, violations) =>
+  api.post('/api/repair', { url, violations }).then((r) => r.data);
