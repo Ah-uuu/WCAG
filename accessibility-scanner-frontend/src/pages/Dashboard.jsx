@@ -14,7 +14,7 @@ const PLAN_COLORS = {
 
 const PLAN_LIMITS = { FREE: 10, PRO: 200, BUSINESS: 1000, ENTERPRISE: -1 };
 
-export default function Dashboard() {
+export default function Dashboard() {h
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
   const [scans, setScans]           = useState([]);
@@ -28,7 +28,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!session) return;
-    getScanHistory().then(setScans).catch(console.error);
+    getScanHistory().then((data) => setScans(Array.isArray(data?.scans) ? data.scans : [])).catch(console.error);
     getSubscription().then(setSub).catch(console.error).finally(() => setLoadingSub(false));
   }, [session]);
 
