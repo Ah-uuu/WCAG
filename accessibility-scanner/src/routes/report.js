@@ -2,11 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { scanUrl } = require('../services/scanner');
 const { generatePDFReport } = require('../services/reportGenerator');
+const { prisma } = require('../lib/db');
 
 /**
  * POST /api/report/pdf
  * Body: { url: "https://example.com" }
- * 
+ *
  * 掃描後直接回傳 PDF 檔案（ACR 格式）
  */
 router.post('/pdf', async (req, res) => {
@@ -48,8 +49,39 @@ router.post('/pdf', async (req, res) => {
 });
 
 /**
+ * GET /api/report/pdf/:scanId
+ * 根據已儲存的掃描 ID 直接生成 PDF（不重新掃描）
+ */
+router.get('/pdf/:scanId', async (req, res) => {
+  const { scanId } = req.params;
+
+  try {
+    const scan = await prisma.Scan.findUnique({ where: { id: scanId } });
+    if (!scan) {
+      return res.status(404).json({ error: 'Scan not found.' });
+    }
+
+    console.log(`[REPORT] Generating PDF for scan: ${scanId}`);
+    const pdfBuffer = await generatePDFReport(scan.result);
+
+    const filename = `accessibility-report-${scanId}.pdf`;
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': pdfBuffer.length,
+    });
+
+    console.log(`[REPORT] PDF generated for scan ${scanId}. Size: ${pdfBuffer.length} bytes`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error(`[REPORT PDF BY ID ERROR] ${err.message}`);
+    return res.status(500).json({ error: 'Failed to generate PDF report.' });
+  }
+});
+
+/**
  * POST /api/report/json
- * 同上但回傳 JSON（給 Lovable 前端用）
+ * 同上但回傳 JSON（給前端用）
  */
 router.post('/json', async (req, res) => {
   const { url } = req.body;
