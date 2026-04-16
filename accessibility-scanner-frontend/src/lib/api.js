@@ -8,23 +8,12 @@ export const api = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
-export const runScan = (url) =>
-  api.post('/api/scan', { url }).then((r) => r.data);
-
-export const getScanHistory = () =>
-  api.get('/api/scan/history').then((r) => r.data);
-
-export const getSubscription = () =>
-  api.get('/api/stripe/subscription').then((r) => r.data);
-
-export const createCheckout = (priceId) =>
-  api.post('/api/stripe/checkout', { priceId }).then((r) => r.data);
-
-export const createPortal = () =>
-  api.post('/api/stripe/portal').then((r) => r.data);
-
-export const getReportUrl = (scanId) =>
-  `${API_URL}/api/report/pdf/${scanId}`;
-
-export const generateRepair = (url, violations) =>
+export const runScan        = (url) => api.post('/api/scan', { url }).then((r) => r.data);
+export const getScanHistory = ()    => api.get('/api/scan/history').then((r) => r.data);
+export const getSubscription = ()   => api.get('/api/stripe/subscription').then((r) => r.data);
+export const createCheckout  = (priceId) => api.post('/api/stripe/checkout', { priceId }).then((r) => r.data);
+export const createPortal    = ()   => api.post('/api/stripe/portal').then((r) => r.data);
+export const cancelSubscription = () => api.post('/api/stripe/cancel').then((r) => r.data);
+export const getReportUrl    = (scanId) => API_URL + '/api/report/pdf/' + scanId;
+export const generateRepair  = (url, violations) =>
   api.post('/api/repair', { url, violations }).then((r) => r.data);
