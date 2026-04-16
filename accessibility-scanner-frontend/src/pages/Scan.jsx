@@ -10,7 +10,9 @@ const impactColor = {
 };
 
 export default function Scan() {
-  const { session } = useSession();
+  const { data: authData } = useSession();
+  const isLoggedIn = !!authData?.user;
+
   const [url, setUrl] = useState('');
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState(null);
@@ -73,13 +75,10 @@ export default function Scan() {
   return (
     <div className="min-h-screen bg-gray-900 text-white p-6">
       <div className="max-w-4xl mx-auto">
-        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-purple-400 mb-2">⚔ WCAG Scanner</h1>
           <p className="text-gray-400">Scan any URL for accessibility violations</p>
         </div>
-
-        {/* Scan Form */}
         <form onSubmit={handleScan} className="mb-8">
           <div className="flex gap-3">
             <input
@@ -99,18 +98,13 @@ export default function Scan() {
             </button>
           </div>
         </form>
-
-        {/* Error */}
         {error && (
           <div className="bg-red-900/40 border border-red-500 rounded-lg p-4 mb-6 text-red-300">
             {error}
           </div>
         )}
-
-        {/* Results */}
         {result && (
           <div className="space-y-6">
-            {/* Score Card */}
             <div className="bg-gray-800 rounded-xl p-6 border border-gray-700">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -121,8 +115,6 @@ export default function Scan() {
                   {result.complianceScore ?? '--'}
                 </div>
               </div>
-
-              {/* Summary */}
               {result.summary && (
                 <div className="grid grid-cols-4 gap-3 mt-4">
                   {Object.entries(result.summary).map(([impact, count]) => (
@@ -133,46 +125,32 @@ export default function Scan() {
                   ))}
                 </div>
               )}
-
-              {/* Actions */}
               <div className="flex gap-3 mt-5 flex-wrap">
                 {result.scanId && (
-                  <a
-                    href={getReportUrl(result.scanId)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  >
+                  <a href={getReportUrl(result.scanId)} target="_blank" rel="noopener noreferrer"
+                    className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                     📄 Download PDF Report
                   </a>
                 )}
-                {session && result.violations?.length > 0 && (
-                  <button
-                    onClick={handleRepair}
-                    disabled={repairing}
-                    className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  >
+                {isLoggedIn && result.violations?.length > 0 && (
+                  <button onClick={handleRepair} disabled={repairing}
+                    className="bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                     {repairing ? '⚙ Fixing...' : '🔧 AUTO-FIX'}
                   </button>
                 )}
               </div>
             </div>
-
-            {/* Repair Result */}
             {repairError && (
               <div className="bg-red-900/40 border border-red-500 rounded-lg p-4 text-red-300">
                 {repairError}
               </div>
             )}
-
             {repair && (
               <div className="bg-gray-800 rounded-xl p-6 border border-green-700">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-xl font-bold text-green-400">🔧 Auto-Fix Results</h2>
-                  <button
-                    onClick={downloadRepaired}
-                    className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                  >
+                  <button onClick={downloadRepaired}
+                    className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                     ⬇ Download Fixed HTML
                   </button>
                 </div>
@@ -199,19 +177,12 @@ export default function Scan() {
                 )}
               </div>
             )}
-
-            {/* Violations */}
             {result.violations?.length > 0 && (
               <div>
-                <h2 className="text-xl font-bold mb-4">
-                  Violations ({result.violations.length})
-                </h2>
+                <h2 className="text-xl font-bold mb-4">Violations ({result.violations.length})</h2>
                 <div className="space-y-3">
                   {result.violations.map((v, i) => (
-                    <div
-                      key={i}
-                      className={`bg-gray-800 rounded-xl p-5 border-l-4 ${impactColor[v.impact] || 'border-gray-500'}`}
-                    >
+                    <div key={i} className={`bg-gray-800 rounded-xl p-5 border-l-4 ${impactColor[v.impact] || 'border-gray-500'}`}>
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div>
                           <span className={`text-xs font-bold uppercase px-2 py-0.5 rounded mr-2 ${impactColor[v.impact]?.split(' ')[0] || 'text-gray-400'} bg-gray-900`}>
@@ -221,24 +192,17 @@ export default function Scan() {
                         </div>
                         {v.helpUrl && (
                           <a href={v.helpUrl} target="_blank" rel="noopener noreferrer"
-                            className="text-xs text-purple-400 hover:text-purple-300 shrink-0">
-                            Learn more ↗
-                          </a>
+                            className="text-xs text-purple-400 hover:text-purple-300 shrink-0">Learn more ↗</a>
                         )}
                       </div>
                       <p className="font-semibold text-white mb-1">{v.help || v.description}</p>
-                      {v.howToFix && (
-                        <p className="text-sm text-gray-400 mt-2">{v.howToFix}</p>
-                      )}
-                      {v.affectedElements > 0 && (
-                        <p className="text-xs text-gray-500 mt-2">{v.affectedElements} element{v.affectedElements !== 1 ? 's' : ''} affected</p>
-                      )}
+                      {v.howToFix && <p className="text-sm text-gray-400 mt-2">{v.howToFix}</p>}
+                      {v.affectedElements > 0 && <p className="text-xs text-gray-500 mt-2">{v.affectedElements} element{v.affectedElements !== 1 ? 's' : ''} affected</p>}
                     </div>
                   ))}
                 </div>
               </div>
             )}
-
             {result.violations?.length === 0 && (
               <div className="bg-green-900/30 border border-green-600 rounded-xl p-6 text-center">
                 <div className="text-4xl mb-2">🎉</div>
