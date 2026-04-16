@@ -119,4 +119,40 @@ router.get('/subscription', requireAuth, async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────────────────
+// POST /api/stripe/cancel
+// 取消訂閱（在當前計費周期結束時生效，不立即中斷）
+// ──────────────────────────────────────────────────────────
+router.post('/cancel', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const sub = await prisma.Subscription.findUnique({ where: { userId } });
+
+    if (!sub?.stripeSubscriptionId) {
+      return res.status(404).json({ error: 'No active subscription found.' });
+    }
+
+    if (sub.cancelAtPeriodEnd) {
+      return res.status(400).json({ error: 'Subscription is already set to cancel.' });
+    }
+
+    // 告訴 Stripe 在當前周期結束時取消
+    await stripe.subscriptions.update(sub.stripeSubscriptionId, {
+      cancel_at_period_end: true,
+    });
+
+    // 更新本地資料庫
+    await prisma.Subscription.update({
+      where: { userId },
+      data: { cancelAtPeriodEnd: true },
+    });
+
+    return res.json({ success: true, cancelAtPeriodEnd: true });
+  } catch (err) {
+    console.error('[STRIPE CANCEL]', err.message);
+    return res.status(500).json({ error: 'Failed to cancel subscription.' });
+  }
+});
+
 module.exports = router;
