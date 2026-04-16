@@ -14,7 +14,7 @@ const PLAN_COLORS = {
 
 const PLAN_LIMITS = { FREE: 10, PRO: 200, BUSINESS: 1000, ENTERPRISE: -1 };
 
-export default function Dashboard() {h
+export default function Dashboard() {
   const { data: session, isPending } = useSession();
   const navigate = useNavigate();
   const [scans, setScans]           = useState([]);
