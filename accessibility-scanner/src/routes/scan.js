@@ -82,9 +82,19 @@ router.get('/history', requireAuth, async (req, res) => {
         score: true,
         status: true,
         createdAt: true,
+        result: true,
       },
     });
-    return res.json({ scans });
+
+    // Compute violations count from result JSON, strip full result from response
+    const mapped = scans.map(({ result, ...rest }) => ({
+      ...rest,
+      violations:
+        result?.summary?.total ??
+        (Array.isArray(result?.violations) ? result.violations.length : 0),
+    }));
+
+    return res.json({ scans: mapped });
   } catch (err) {
     console.error('[SCAN HISTORY] Error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch scan history.' });
