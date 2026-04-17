@@ -36,4 +36,3 @@ export default function App() {
     </>
   );
 }
-Add /scan/:id route for ScanDetail pag
