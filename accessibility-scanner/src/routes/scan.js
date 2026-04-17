@@ -40,8 +40,6 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
             status: result.status,
           },
         });
-        // Override the scanner-generated UUID with the Prisma DB id
-        // so the frontend can use it to fetch the PDF report
         result.scanId = savedScan.id;
       } catch (dbErr) {
         console.error('[SCAN] Failed to save scan to DB:', dbErr.message);
@@ -86,7 +84,6 @@ router.get('/history', requireAuth, async (req, res) => {
       },
     });
 
-    // Compute violations count from result JSON, strip full result from response
     const mapped = scans.map(({ result, ...rest }) => ({
       ...rest,
       violations:
@@ -98,6 +95,22 @@ router.get('/history', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('[SCAN HISTORY] Error:', err.message);
     return res.status(500).json({ error: 'Failed to fetch scan history.' });
+  }
+});
+
+// GET /api/scan/:id  — full detail for history detail page
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const scan = await prisma.Scan.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+    if (!scan) {
+      return res.status(404).json({ error: 'Scan not found.' });
+    }
+    return res.json(scan);
+  } catch (err) {
+    console.error('[SCAN DETAIL] Error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch scan detail.' });
   }
 });
 
