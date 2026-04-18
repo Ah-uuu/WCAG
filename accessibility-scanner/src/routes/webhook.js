@@ -4,20 +4,14 @@ const { prisma } = require('../lib/db');
 
 const router = express.Router();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Stripe API v2026+ 將 current_period_end 從訂閱根層級移至 items.data[0]
-// 此 helper 兼容新舊版本
-// ─────────────────────────────────────────────────────────────────────────────
+// Helper: compatible with Stripe API 2026-03-25.dahlia which moved current_period_end
 function getPeriodEnd(stripeSub) {
-  const ts = stripeSub.current_period_end
-    ?? stripeSub.items?.data?.[0]?.current_period_end;
+  const ts =
+    stripeSub.current_period_end ??
+    stripeSub.items?.data?.[0]?.current_period_end;
   return ts ? new Date(ts * 1000) : null;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /webhook/stripe
-// 必須掛在 express.json() 之前，使用 express.raw() 解析原始 body
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig    = req.headers['stripe-signature'];
   const secret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -35,30 +29,27 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
   try {
     switch (event.type) {
 
-      // ── 付款成功，Checkout 完成 ──────────────────────────────────────────
       case 'checkout.session.completed': {
         const session = event.data.object;
         if (session.mode !== 'subscription') break;
-
         const userId = session.metadata?.userId;
-        if (!userId) {
-          console.warn('[WEBHOOK] checkout.session.completed: missing userId in metadata');
-          break;
-        }
+        if (!userId) break;
 
-        const stripeSub = await stripe.subscriptions.retrieve(session.subscription);
-        const priceId   = stripeSub.items.data[0]?.price?.id;
-        const plan      = PLAN_PRICE_MAP[priceId] || 'FREE';
+        const stripeSub      = await stripe.subscriptions.retrieve(session.subscription);
+        const priceId        = stripeSub.items.data[0]?.price?.id;
+        const plan           = PLAN_PRICE_MAP[priceId] || 'FREE';
+        const currentPeriodEnd = getPeriodEnd(stripeSub);
 
         await prisma.Subscription.upsert({
           where:  { userId },
           update: {
+            stripeCustomerId:     session.customer,
             stripeSubscriptionId: session.subscription,
             stripePriceId:        priceId,
             plan,
-            status:            'ACTIVE',
-            currentPeriodEnd:  getPeriodEnd(stripeSub),
-            cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+            status:               'ACTIVE',
+            currentPeriodEnd,
+            cancelAtPeriodEnd:    stripeSub.cancel_at_period_end ?? false,
           },
           create: {
             userId,
@@ -66,8 +57,9 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
             stripeSubscriptionId: session.subscription,
             stripePriceId:        priceId,
             plan,
-            status:           'ACTIVE',
-            currentPeriodEnd: getPeriodEnd(stripeSub),
+            status:               'ACTIVE',
+            currentPeriodEnd,
+            cancelAtPeriodEnd:    stripeSub.cancel_at_period_end ?? false,
           },
         });
 
@@ -75,33 +67,38 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
         break;
       }
 
-      // ── 訂閱更新（升級 / 降級 / 取消預定）──────────────────────────────
+      // KEY FIX: changed from updateMany -> upsert so record is created if missing
       case 'customer.subscription.updated': {
         const stripeSub = event.data.object;
         const userId    = stripeSub.metadata?.userId;
-        if (!userId) {
-          console.warn('[WEBHOOK] subscription.updated: missing userId in metadata');
-          break;
-        }
+        if (!userId) break;
 
-        const priceId = stripeSub.items.data[0]?.price?.id;
-        const plan    = PLAN_PRICE_MAP[priceId] || 'FREE';
+        const priceId          = stripeSub.items.data[0]?.price?.id;
+        const plan             = PLAN_PRICE_MAP[priceId] || 'FREE';
+        const currentPeriodEnd = getPeriodEnd(stripeSub);
+        const statusMap = { active: 'ACTIVE', canceled: 'CANCELED', past_due: 'PAST_DUE', incomplete: 'INCOMPLETE' };
+        const status = statusMap[stripeSub.status] || 'ACTIVE';
 
-        const statusMap = {
-          active:     'ACTIVE',
-          canceled:   'CANCELED',
-          past_due:   'PAST_DUE',
-          incomplete: 'INCOMPLETE',
-        };
-
-        await prisma.Subscription.updateMany({
-          where: { userId },
-          data: {
+        await prisma.Subscription.upsert({
+          where:  { userId },
+          update: {
+            stripeCustomerId:     stripeSub.customer,
+            stripeSubscriptionId: stripeSub.id,
+            stripePriceId:        priceId,
             plan,
-            stripePriceId:     priceId,
-            status:            statusMap[stripeSub.status] || 'ACTIVE',
-            currentPeriodEnd:  getPeriodEnd(stripeSub),
-            cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+            status,
+            currentPeriodEnd,
+            cancelAtPeriodEnd:    stripeSub.cancel_at_period_end ?? false,
+          },
+          create: {
+            userId,
+            stripeCustomerId:     stripeSub.customer,
+            stripeSubscriptionId: stripeSub.id,
+            stripePriceId:        priceId,
+            plan,
+            status,
+            currentPeriodEnd,
+            cancelAtPeriodEnd:    stripeSub.cancel_at_period_end ?? false,
           },
         });
 
@@ -109,7 +106,6 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
         break;
       }
 
-      // ── 訂閱取消 ────────────────────────────────────────────────────────
       case 'customer.subscription.deleted': {
         const stripeSub = event.data.object;
         const userId    = stripeSub.metadata?.userId;
@@ -131,42 +127,24 @@ router.post('/', express.raw({ type: 'application/json' }), async (req, res) => 
         break;
       }
 
-      // ── 發票付款失敗 ─────────────────────────────────────────────────────
       case 'invoice.payment_failed': {
         const invoice   = event.data.object;
-        const stripeSub = invoice.subscription
-          ? await stripe.subscriptions.retrieve(invoice.subscription)
-          : null;
-        const userId = stripeSub?.metadata?.userId;
+        const stripeSub = invoice.subscription ? await stripe.subscriptions.retrieve(invoice.subscription) : null;
+        const userId    = stripeSub?.metadata?.userId;
         if (!userId) break;
-
-        await prisma.Subscription.updateMany({
-          where: { userId },
-          data:  { status: 'PAST_DUE' },
-        });
-
+        await prisma.Subscription.updateMany({ where: { userId }, data: { status: 'PAST_DUE' } });
         console.log(`[WEBHOOK] Payment failed: user=${userId}`);
         break;
       }
 
-      // ── 發票付款成功（訂閱續費）─────────────────────────────────────────
       case 'invoice.paid': {
         const invoice   = event.data.object;
-        const stripeSub = invoice.subscription
-          ? await stripe.subscriptions.retrieve(invoice.subscription)
-          : null;
-        const userId = stripeSub?.metadata?.userId;
+        const stripeSub = invoice.subscription ? await stripe.subscriptions.retrieve(invoice.subscription) : null;
+        const userId    = stripeSub?.metadata?.userId;
         if (!userId) break;
-
-        await prisma.Subscription.updateMany({
-          where: { userId },
-          data: {
-            status:           'ACTIVE',
-            currentPeriodEnd: getPeriodEnd(stripeSub),
-          },
-        });
-
-        console.log(`[WEBHOOK] Invoice paid, subscription renewed: user=${userId}`);
+        const currentPeriodEnd = getPeriodEnd(stripeSub);
+        await prisma.Subscription.updateMany({ where: { userId }, data: { status: 'ACTIVE', currentPeriodEnd } });
+        console.log(`[WEBHOOK] Invoice paid: user=${userId}`);
         break;
       }
 
