@@ -1,188 +1,176 @@
 const express = require('express');
-const { stripe, PLAN_PRICE_MAP, PLAN_LABELS } = require('../lib/stripe');
+const { stripe, PLAN_PRICE_MAP, PLAN_LIMITS, PLAN_LABELS } = require('../lib/stripe');
 const { prisma } = require('../lib/db');
 const { requireAuth } = require('../middleware/requireAuth');
+
 const router = express.Router();
 
-// ─────────────────────────────────────────────────────────────────────────────
+// Helper: get current_period_end compatible with Stripe API 2026+
+function getPeriodEnd(stripeSub) {
+  const ts = stripeSub.current_period_end ?? stripeSub.items?.data?.[0]?.current_period_end;
+  return ts ? new Date(ts * 1000) : null;
+}
+
 // POST /api/stripe/checkout
-// 建立 Stripe Checkout Session（新訂閱）或導向 Customer Portal（已訂閱升降級）
-// Body: { priceId: "price_xxx" }
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/checkout', requireAuth, async (req, res) => {
   const { priceId } = req.body;
-  if (!priceId) {
-    return res.status(400).json({ error: 'priceId is required' });
-  }
+  const validPrices = [
+    process.env.STRIPE_PRICE_PRO,
+    process.env.STRIPE_PRICE_BUSINESS,
+    process.env.STRIPE_PRICE_ENTERPRISE,
+  ].filter(Boolean);
 
-  if (!Object.keys(PLAN_PRICE_MAP).includes(priceId)) {
-    return res.status(400).json({ error: 'Invalid priceId' });
+  if (!priceId || !validPrices.includes(priceId)) {
+    return res.status(400).json({ error: 'Invalid price ID.' });
   }
 
   try {
-    const userId = req.user.id;
-    const email  = req.user.email;
+    let subscription = await prisma.Subscription.findUnique({ where: { userId: req.user.id } });
+    let customerId = subscription?.stripeCustomerId;
 
-    const sub = await prisma.Subscription.findUnique({ where: { userId } });
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: req.user.email,
+        name:  req.user.name || undefined,
+        metadata: { userId: req.user.id },
+      });
+      customerId = customer.id;
+      subscription = await prisma.Subscription.upsert({
+        where:  { userId: req.user.id },
+        update: { stripeCustomerId: customerId },
+        create: { userId: req.user.id, stripeCustomerId: customerId, plan: 'FREE', status: 'ACTIVE' },
+      });
+    }
 
-    // 已有有效訂閱：導向 Customer Portal
-    if (sub?.stripeCustomerId && sub?.stripeSubscriptionId && sub.status === 'ACTIVE') {
+    if (subscription?.stripeSubscriptionId) {
       const portalSession = await stripe.billingPortal.sessions.create({
-        customer:   sub.stripeCustomerId,
-        return_url: `${process.env.FRONTEND_URL}/dashboard`,
+        customer: customerId, return_url: process.env.FRONTEND_URL + '/dashboard',
       });
       return res.json({ url: portalSession.url });
     }
 
-    const customerOptions = sub?.stripeCustomerId
-      ? { customer: sub.stripeCustomerId }
-      : { customer_email: email };
-
     const session = await stripe.checkout.sessions.create({
-      ...customerOptions,
-      mode:       'subscription',
+      customer: customerId,
+      mode: 'subscription',
       line_items: [{ price: priceId, quantity: 1 }],
-      success_url: `${process.env.FRONTEND_URL}/dashboard?checkout=success`,
-      cancel_url:  `${process.env.FRONTEND_URL}/pricing?checkout=cancel`,
-      metadata: { userId },
-      subscription_data: { metadata: { userId } },
-      allow_promotion_codes: true,
+      success_url: process.env.FRONTEND_URL + '/dashboard?checkout=success',
+      cancel_url:  process.env.FRONTEND_URL + '/pricing?canceled=true',
+      metadata: { userId: req.user.id },
+      subscription_data: { metadata: { userId: req.user.id } },
     });
-
     return res.json({ url: session.url });
   } catch (err) {
-    console.error('[STRIPE CHECKOUT]', err.message);
+    console.error('[STRIPE] Checkout error:', err.message);
     return res.status(500).json({ error: 'Failed to create checkout session.' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/stripe/portal
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/portal', requireAuth, async (req, res) => {
   try {
-    const sub = await prisma.Subscription.findUnique({ where: { userId: req.user.id } });
-    if (!sub?.stripeCustomerId) {
-      return res.status(404).json({ error: 'No active subscription found.' });
+    const subscription = await prisma.Subscription.findUnique({ where: { userId: req.user.id } });
+    if (!subscription?.stripeCustomerId) {
+      return res.status(404).json({ error: 'No subscription found.' });
     }
     const portalSession = await stripe.billingPortal.sessions.create({
-      customer:   sub.stripeCustomerId,
-      return_url: `${process.env.FRONTEND_URL}/dashboard`,
+      customer: subscription.stripeCustomerId,
+      return_url: process.env.FRONTEND_URL + '/dashboard',
     });
     return res.json({ url: portalSession.url });
   } catch (err) {
-    console.error('[STRIPE PORTAL]', err.message);
-    return res.status(500).json({ error: 'Failed to create portal session.' });
+    console.error('[STRIPE] Portal error:', err.message);
+    return res.status(500).json({ error: 'Failed to open customer portal.' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/stripe/subscription
-// 回傳目前用戶的方案資訊與本月用量
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/subscription', requireAuth, async (req, res) => {
   try {
-    const userId = req.user.id;
-    const sub    = await prisma.Subscription.findUnique({ where: { userId } });
-    const plan   = sub?.status === 'ACTIVE' ? (sub.plan || 'FREE') : 'FREE';
-
-    const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-    const scansUsed  = await prisma.Scan.count({
-      where: { userId, createdAt: { gte: monthStart } },
+    const subscription = await prisma.Subscription.findUnique({ where: { userId: req.user.id } });
+    const plan  = subscription?.plan  ?? 'FREE';
+    const limit = PLAN_LIMITS[plan];
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const used = await prisma.Scan.count({
+      where: { userId: req.user.id, createdAt: { gte: startOfMonth } },
     });
-
     return res.json({
       plan,
-      status:           sub?.status ?? 'FREE',
-      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
-      cancelAtPeriodEnd: sub?.cancelAtPeriodEnd ?? false,
-      scansUsed,
-      label: PLAN_LABELS[plan] || plan,
+      label:             PLAN_LABELS[plan],
+      status:            subscription?.status ?? 'ACTIVE',
+      currentPeriodEnd:  subscription?.currentPeriodEnd,
+      cancelAtPeriodEnd: subscription?.cancelAtPeriodEnd ?? false,
+      usage: { used, limit, unlimited: limit === -1 },
     });
   } catch (err) {
-    console.error('[STRIPE SUBSCRIPTION]', err.message);
-    return res.status(500).json({ error: 'Failed to fetch subscription info.' });
+    console.error('[STRIPE] Get subscription error:', err.message);
+    return res.status(500).json({ error: 'Failed to fetch subscription.' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/stripe/sync
-// 付款跳轉回來後，主動從 Stripe 拉最新訂閱狀態更新 DB
-// 解決 webhook 尚未抵達時 Dashboard 仍顯示 FREE 的競速問題
-// ─────────────────────────────────────────────────────────────────────────────
+// Bypasses webhook race condition by querying Stripe directly.
+// IMPROVED: if no stripeCustomerId in DB, looks up customer by email on Stripe.
 router.post('/sync', requireAuth, async (req, res) => {
+  const userId = req.user.id;
   try {
-    const userId = req.user.id;
-    const sub    = await prisma.Subscription.findUnique({ where: { userId } });
+    let sub = await prisma.Subscription.findUnique({ where: { userId } });
+    let stripeCustomerId = sub?.stripeCustomerId;
 
-    if (!sub?.stripeCustomerId) {
+    // Bootstrap: if no customerId in DB, look up by email on Stripe
+    if (!stripeCustomerId && req.user.email) {
+      const { data: customers } = await stripe.customers.list({ email: req.user.email, limit: 5 });
+      const match = customers.find(c => c.metadata?.userId === userId) || customers[0];
+      stripeCustomerId = match?.id || null;
+      console.log('[SYNC] Bootstrap customer lookup:', stripeCustomerId ? 'found ' + stripeCustomerId : 'not found');
+    }
+
+    if (!stripeCustomerId) {
       return res.json({ plan: 'FREE', synced: false });
     }
 
-    // 直接向 Stripe 查詢此 customer 的活躍訂閱
     const { data: activeSubs } = await stripe.subscriptions.list({
-      customer: sub.stripeCustomerId,
-      status:   'active',
-      limit:    1,
+      customer: stripeCustomerId, status: 'active', limit: 1,
     });
 
     if (activeSubs.length === 0) {
       return res.json({ plan: 'FREE', synced: false });
     }
 
-    const stripeSub = activeSubs[0];
-    const priceId   = stripeSub.items.data[0]?.price?.id;
-    const plan      = PLAN_PRICE_MAP[priceId] || 'FREE';
+    const stripeSub   = activeSubs[0];
+    const priceId     = stripeSub.items.data[0]?.price?.id;
+    const plan        = PLAN_PRICE_MAP[priceId] || 'FREE';
+    const currentPeriodEnd = getPeriodEnd(stripeSub);
 
-    await prisma.Subscription.update({
-      where: { userId },
-      data: {
+    await prisma.Subscription.upsert({
+      where:  { userId },
+      update: {
+        stripeCustomerId,
         stripeSubscriptionId: stripeSub.id,
-        stripePriceId:        priceId,
+        stripePriceId: priceId,
         plan,
-        status:           'ACTIVE',
-        currentPeriodEnd: new Date(stripeSub.current_period_end * 1000),
-        cancelAtPeriodEnd: stripeSub.cancel_at_period_end,
+        status: 'ACTIVE',
+        currentPeriodEnd,
+        cancelAtPeriodEnd: stripeSub.cancel_at_period_end ?? false,
+      },
+      create: {
+        userId,
+        stripeCustomerId,
+        stripeSubscriptionId: stripeSub.id,
+        stripePriceId: priceId,
+        plan,
+        status: 'ACTIVE',
+        currentPeriodEnd,
+        cancelAtPeriodEnd: stripeSub.cancel_at_period_end ?? false,
       },
     });
 
-    console.log(`[STRIPE SYNC] user ${userId} synced to plan: ${plan}`);
+    console.log('[SYNC] Synced user=' + userId + ' plan=' + plan);
     return res.json({ plan, synced: true });
   } catch (err) {
-    console.error('[STRIPE SYNC]', err.message);
-    return res.status(500).json({ error: 'Failed to sync subscription.' });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/stripe/cancel
-// 在當前計費周期結束時取消訂閱
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/cancel', requireAuth, async (req, res) => {
-  try {
-    const userId = req.user.id;
-    const sub    = await prisma.Subscription.findUnique({ where: { userId } });
-
-    if (!sub?.stripeSubscriptionId) {
-      return res.status(404).json({ error: 'No active subscription found.' });
-    }
-    if (sub.cancelAtPeriodEnd) {
-      return res.status(400).json({ error: 'Subscription is already set to cancel.' });
-    }
-
-    await stripe.subscriptions.update(sub.stripeSubscriptionId, {
-      cancel_at_period_end: true,
-    });
-
-    await prisma.Subscription.update({
-      where: { userId },
-      data:  { cancelAtPeriodEnd: true },
-    });
-
-    return res.json({ success: true, cancelAtPeriodEnd: true });
-  } catch (err) {
-    console.error('[STRIPE CANCEL]', err.message);
-    return res.status(500).json({ error: 'Failed to cancel subscription.' });
+    console.error('[SYNC] Error:', err.message);
+    return res.status(500).json({ error: 'Sync failed.' });
   }
 });
 
