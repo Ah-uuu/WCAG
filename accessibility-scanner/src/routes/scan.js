@@ -6,7 +6,9 @@ const { scanLimit }    = require('../middleware/scanLimit');
 
 const router = express.Router();
 
+// ─────────────────────────────────────────────────────────────────────────────
 // POST /api/scan
+// ─────────────────────────────────────────────────────────────────────────────
 router.post('/', optionalAuth, scanLimit, async (req, res) => {
   const { url } = req.body;
 
@@ -25,6 +27,32 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
     return res.status(400).json({ error: 'Only http and https URLs are supported' });
   }
 
+  // ── 訪客掃描次數限制（每個 fingerprint 只能掃描一次）────────────────────────
+  if (!req.user) {
+    const rawIp = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+      || req.socket?.remoteAddress
+      || 'unknown';
+    // 優先使用前端傳來的 localStorage UUID；沒有時 fallback 到 IP
+    const fingerprint = req.headers['x-guest-id'] || `ip:${rawIp}`;
+
+    try {
+      const existing = await prisma.GuestScan.findUnique({ where: { fingerprint } });
+      if (existing) {
+        return res.status(403).json({
+          error: 'GUEST_LIMIT_REACHED',
+          message: '已達免費掃描次數上限，請註冊帳號以繼續使用。',
+        });
+      }
+    } catch (dbErr) {
+      // 查詢失敗時允許掃描（fail open），避免誤傷正常使用者
+      console.error('[SCAN] Guest fingerprint check failed:', dbErr.message);
+    }
+
+    req._guestFingerprint = fingerprint;
+    req._guestIp = rawIp !== 'unknown' ? rawIp : null;
+  }
+
+  // ── 執行掃描 ──────────────────────────────────────────────────────────────
   try {
     console.log(`[SCAN] Starting scan for: ${url} (user: ${req.user?.id ?? 'anonymous'})`);
     const result = await scanUrl(url);
@@ -46,7 +74,22 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
       console.error('[SCAN] Failed to save scan to DB:', dbErr.message);
     }
 
-    // ── 已登入用戶：附加用量資訊給前端顯示 ───────────────────────────────────
+    // ── 訪客掃描：記錄 fingerprint，防止再次掃描 ─────────────────────────────
+    if (!req.user && req._guestFingerprint) {
+      try {
+        await prisma.GuestScan.create({
+          data: {
+            fingerprint: req._guestFingerprint,
+            ip: req._guestIp || null,
+          },
+        });
+      } catch (dbErr) {
+        // race condition 或重複 key — 忽略
+        console.error('[SCAN] Failed to record guest fingerprint:', dbErr.message);
+      }
+    }
+
+    // ── 已登入用戶：附加用量資訊給前端顯示 ─────────────────────────────────
     if (req.user && req.scanLimit !== undefined) {
       result._usage = {
         plan:  req.scanPlan,
@@ -70,7 +113,9 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/scan/history
+// ─────────────────────────────────────────────────────────────────────────────
 router.get('/history', requireAuth, async (req, res) => {
   try {
     const scans = await prisma.Scan.findMany({
@@ -99,7 +144,9 @@ router.get('/history', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/scan/:id — full detail for history detail page
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/scan/:id — full detail
+// ─────────────────────────────────────────────────────────────────────────────
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const scan = await prisma.Scan.findFirst({
