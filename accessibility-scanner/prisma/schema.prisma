@@ -1,131 +1,155 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// AccessScan — Prisma Schema
+// 資料庫：PostgreSQL (Render)
+// ORM：Prisma
+// ─────────────────────────────────────────────────────────────────────────────
+
 generator client {
   provider = "prisma-client-js"
-  }
+}
 
-  datasource db {
-    provider = "postgresql"
-      url      = env("DATABASE_URL")
-      }
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
 
-      model user {
-        id            String   @id @default(cuid())
-          name          String
-            email         String   @unique
-              emailVerified Boolean  @default(false)
-                image         String?
-                  createdAt     DateTime @default(now())
-                    updatedAt     DateTime @updatedAt
+// ─── Better Auth 必要模型（名稱與欄位不可改動）────────────────────────────────
 
-                      sessions      session[]
-                        accounts      account[]
+model user {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-                          subscription  Subscription?
-                            scans         Scan[]
-                              repairs       Repair[]
-                              }
+  sessions      session[]
+  accounts      account[]
 
-                              model session {
-                                id        String   @id @default(cuid())
-                                  expiresAt DateTime
-                                    token     String   @unique
-                                      createdAt DateTime @default(now())
-                                        updatedAt DateTime @updatedAt
-                                          ipAddress String?
-                                            userAgent String?
-                                              userId    String
+  // App 關聯
+  subscription  Subscription?
+  scans         Scan[]
+  repairs       Repair[]
+}
 
-                                                user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
-                                                }
+model session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
 
-                                                model account {
-                                                  id                    String    @id @default(cuid())
-                                                    accountId             String
-                                                      providerId            String
-                                                        userId                String
-                                                          accessToken           String?
-                                                            refreshToken          String?
-                                                              idToken               String?
-                                                                accessTokenExpiresAt  DateTime?
-                                                                  refreshTokenExpiresAt DateTime?
-                                                                    scope                 String?
-                                                                      password              String?
-                                                                        createdAt             DateTime  @default(now())
-                                                                          updatedAt             DateTime  @updatedAt
+  user      user     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
 
-                                                                            user                  user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+model account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
 
-                                                                              @@unique([providerId, accountId])
-                                                                              }
+  user                  user      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-                                                                              model verification {
-                                                                                id         String    @id @default(cuid())
-                                                                                  identifier String
-                                                                                    value      String
-                                                                                      expiresAt  DateTime
-                                                                                        createdAt  DateTime? @default(now())
-                                                                                          updatedAt  DateTime? @updatedAt
-                                                                                          }
+  @@unique([providerId, accountId])
+}
 
-                                                                                          model Subscription {
-                                                                                            id                   String    @id @default(cuid())
-                                                                                              userId               String    @unique
-                                                                                                stripeCustomerId     String    @unique
-                                                                                                  stripeSubscriptionId String?   @unique
-                                                                                                    stripePriceId        String?
-                                                                                                      plan                 Plan      @default(FREE)
-                                                                                                        status               SubStatus @default(ACTIVE)
-                                                                                                          currentPeriodEnd     DateTime?
-                                                                                                            cancelAtPeriodEnd    Boolean   @default(false)
-                                                                                                              createdAt            DateTime  @default(now())
-                                                                                                                updatedAt            DateTime  @updatedAt
-                                                                                                                
-                                                                                                                  user                 user      @relation(fields: [userId], references: [id], onDelete: Cascade)
-                                                                                                                  }
-                                                                                                                  
-                                                                                                                  model Scan {
-                                                                                                                    id        String   @id @default(cuid())
-                                                                                                                      userId    String?
-                                                                                                                        url       String
-                                                                                                                          result    Json
-                                                                                                                            score     Int?
-                                                                                                                              status    String?
-                                                                                                                                createdAt DateTime @default(now())
-                                                                                                                                
-                                                                                                                                  user      user?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-                                                                                                                                  }
-                                                                                                                                  
-                                                                                                                                  model Repair {
-                                                                                                                                    id           String       @id @default(cuid())
-                                                                                                                                      userId       String
-                                                                                                                                        originalHtml String       @db.Text
-                                                                                                                                          repairedHtml String?      @db.Text
-                                                                                                                                            diff         String?      @db.Text
-                                                                                                                                              issueCount   Int          @default(0)
-                                                                                                                                                status       RepairStatus @default(PENDING)
-                                                                                                                                                  createdAt    DateTime     @default(now())
-                                                                                                                                                    updatedAt    DateTime     @updatedAt
-                                                                                                                                                    
-                                                                                                                                                      user         user         @relation(fields: [userId], references: [id], onDelete: Cascade)
-                                                                                                                                                      }
-                                                                                                                                                      
-                                                                                                                                                      enum Plan {
-                                                                                                                                                        FREE
-                                                                                                                                                          PRO
-                                                                                                                                                            BUSINESS
-                                                                                                                                                              ENTERPRISE
-                                                                                                                                                              }
-                                                                                                                                                              
-                                                                                                                                                              enum SubStatus {
-                                                                                                                                                                ACTIVE
-                                                                                                                                                                  CANCELED
-                                                                                                                                                                    PAST_DUE
-                                                                                                                                                                      INCOMPLETE
-                                                                                                                                                                      }
-                                                                                                                                                                      
-                                                                                                                                                                      enum RepairStatus {
-                                                                                                                                                                        PENDING
-                                                                                                                                                                          PROCESSING
-                                                                                                                                                                            COMPLETED
-                                                                                                                                                                              FAILED
-                                                                                                                                                                                MANUAL_REVIEW
-                                                                                                                                                                                }
+model verification {
+  id         String    @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime? @default(now())
+  updatedAt  DateTime? @updatedAt
+}
+
+// ─── App 模型 ─────────────────────────────────────────────────────────────────
+
+/// 訂閱記錄（每個用戶一筆）
+model Subscription {
+  id                   String    @id @default(cuid())
+  userId               String    @unique
+  stripeCustomerId     String    @unique
+  stripeSubscriptionId String?   @unique
+  stripePriceId        String?
+  plan                 Plan      @default(FREE)
+  status               SubStatus @default(ACTIVE)
+  currentPeriodEnd     DateTime?
+  cancelAtPeriodEnd    Boolean   @default(false)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  user                 user      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// 掃描記錄
+model Scan {
+  id        String   @id @default(cuid())
+  userId    String?
+  url       String
+  result    Json
+  score     Int?
+  status    String?
+  createdAt DateTime @default(now())
+
+  user      user?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+/// 訪客掃描記錄（限制匿名使用者每個 fingerprint 只能掃描一次）
+model GuestScan {
+  id          String   @id @default(cuid())
+  fingerprint String   @unique
+  ip          String?
+  createdAt   DateTime @default(now())
+}
+
+/// HTML 修復記錄
+model Repair {
+  id          String       @id @default(cuid())
+  userId      String
+  originalHtml String      @db.Text
+  repairedHtml String?     @db.Text
+  diff        String?      @db.Text
+  issueCount  Int          @default(0)
+  status      RepairStatus @default(PENDING)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  user        user         @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Plan {
+  FREE
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum SubStatus {
+  ACTIVE
+  CANCELED
+  PAST_DUE
+  INCOMPLETE
+}
+
+enum RepairStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  MANUAL_REVIEW
+}
