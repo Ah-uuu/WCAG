@@ -1,14 +1,15 @@
 const express = require('express');
 const { scanUrl } = require('../services/scanner');
-const { prisma } = require('../lib/db');
+const { prisma }  = require('../lib/db');
 const { optionalAuth, requireAuth } = require('../middleware/requireAuth');
-const { scanLimit } = require('../middleware/scanLimit');
+const { scanLimit }    = require('../middleware/scanLimit');
 
 const router = express.Router();
 
 // POST /api/scan
 router.post('/', optionalAuth, scanLimit, async (req, res) => {
   const { url } = req.body;
+
   if (!url) {
     return res.status(400).json({ error: 'url is required' });
   }
@@ -29,27 +30,27 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
     const result = await scanUrl(url);
     console.log(`[SCAN] Completed. Score: ${result.complianceScore}%, Violations: ${result.summary.total}`);
 
-    if (req.user) {
-      try {
-        const savedScan = await prisma.Scan.create({
-          data: {
-            userId: req.user.id,
-            url,
-            result,
-            score: result.complianceScore,
-            status: result.status,
-          },
-        });
-        result.scanId = savedScan.id;
-      } catch (dbErr) {
-        console.error('[SCAN] Failed to save scan to DB:', dbErr.message);
-      }
+    // ── 所有掃描都存入 DB（訪客用戶 userId 為 null）─────────────────────────
+    try {
+      const savedScan = await prisma.Scan.create({
+        data: {
+          userId: req.user?.id ?? null,
+          url,
+          result,
+          score:  result.complianceScore,
+          status: result.status,
+        },
+      });
+      result.scanId = savedScan.id;
+    } catch (dbErr) {
+      console.error('[SCAN] Failed to save scan to DB:', dbErr.message);
     }
 
+    // ── 已登入用戶：附加用量資訊給前端顯示 ───────────────────────────────────
     if (req.user && req.scanLimit !== undefined) {
       result._usage = {
-        plan: req.scanPlan,
-        used: (req.scanUsed ?? 0) + 1,
+        plan:  req.scanPlan,
+        used:  (req.scanUsed ?? 0) + 1,
         limit: req.scanLimit,
         unlimited: req.scanLimit === -1,
       };
@@ -58,11 +59,13 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
     return res.json(result);
   } catch (err) {
     console.error(`[SCAN ERROR] ${err.message}`);
+
     if (err.message.includes('net::ERR') || err.message.includes('Navigation timeout')) {
       return res.status(422).json({
         error: 'Could not reach the URL. Make sure the site is accessible and try again.',
       });
     }
+
     return res.status(500).json({ error: 'Scan failed. Please try again.' });
   }
 });
@@ -71,24 +74,22 @@ router.post('/', optionalAuth, scanLimit, async (req, res) => {
 router.get('/history', requireAuth, async (req, res) => {
   try {
     const scans = await prisma.Scan.findMany({
-      where: { userId: req.user.id },
+      where:   { userId: req.user.id },
       orderBy: { createdAt: 'desc' },
-      take: 50,
+      take:    50,
       select: {
-        id: true,
-        url: true,
-        score: true,
-        status: true,
+        id:        true,
+        url:       true,
+        score:     true,
+        status:    true,
         createdAt: true,
-        result: true,
+        result:    true,
       },
     });
 
     const mapped = scans.map(({ result, ...rest }) => ({
       ...rest,
-      violations:
-        result?.summary?.total ??
-        (Array.isArray(result?.violations) ? result.violations.length : 0),
+      violations: result?.summary?.total ?? (Array.isArray(result?.violations) ? result.violations.length : 0),
     }));
 
     return res.json({ scans: mapped });
@@ -98,15 +99,17 @@ router.get('/history', requireAuth, async (req, res) => {
   }
 });
 
-// GET /api/scan/:id  — full detail for history detail page
+// GET /api/scan/:id — full detail for history detail page
 router.get('/:id', requireAuth, async (req, res) => {
   try {
     const scan = await prisma.Scan.findFirst({
       where: { id: req.params.id, userId: req.user.id },
     });
+
     if (!scan) {
       return res.status(404).json({ error: 'Scan not found.' });
     }
+
     return res.json(scan);
   } catch (err) {
     console.error('[SCAN DETAIL] Error:', err.message);
